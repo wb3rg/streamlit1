@@ -67,7 +67,7 @@ class BitGetClient:
         Fetch klines (OHLCV) data from BitGet with efficient pagination.
         
         Args:
-            symbol: Trading pair symbol (e.g., 'BTCUSDT')
+            symbol: Trading pair symbol (e.g., 'BTC/USDT')
             interval: Time interval (1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d, 1w)
             limit: Number of records to fetch
             start_time: Start time in milliseconds
@@ -80,26 +80,27 @@ class BitGetClient:
         
         # Convert interval to BitGet format
         interval_map = {
-            "1m": "1min",
-            "5m": "5min",
-            "15m": "15min",
-            "30m": "30min",
-            "1h": "1h",
-            "4h": "4h",
-            "12h": "12h",
-            "1d": "1d",
-            "1w": "1w"
+            "1m": "1",
+            "5m": "5",
+            "15m": "15",
+            "30m": "30",
+            "1h": "60",
+            "4h": "240",
+            "12h": "720",
+            "1d": "1440",
+            "1w": "10080"
         }
-        bitget_interval = interval_map.get(interval, "1min")
+        bitget_interval = interval_map.get(interval, "1")
         
-        endpoint = "/api/v2/spot/market/candles"
+        endpoint = "/api/mix/v1/market/candles"
         params = {
-            "symbol": symbol,
-            "interval": bitget_interval,
-            "limit": min(limit, 1000)  # BitGet max limit
+            "symbol": symbol + "_UMCBL",  # Add UMCBL suffix for USDT-M contracts
+            "granularity": bitget_interval,
+            "limit": str(min(limit, 1000)),  # Convert to string as required by API
+            "productType": "UMCBL"  # Specify USDT-M perpetual
         }
         if start_time is not None:
-            params["startTime"] = start_time
+            params["startTime"] = str(start_time)  # Convert to string as required by API
             
         self._wait_for_rate_limit()
         response = self.session.get(f"{self.base_url}{endpoint}", params=params)
@@ -109,11 +110,11 @@ class BitGetClient:
             
         data = response.json()
         
-        if "data" not in data:
+        if not isinstance(data, list):
             raise Exception(f"Unexpected response format: {data}")
             
-        # Convert to DataFrame
-        df = pd.DataFrame(data["data"], columns=[
+        # Convert to DataFrame - BitGet returns data in reverse chronological order
+        df = pd.DataFrame(data, columns=[
             "time", "open", "high", "low", "close", "volume", "quote_volume"
         ])
         
@@ -121,6 +122,9 @@ class BitGetClient:
         df["time"] = pd.to_datetime(df["time"].astype(float), unit="ms")
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = df[col].astype(float)
+        
+        # Sort chronologically and set index
+        df = df.sort_values("time")
         df.set_index("time", inplace=True)
         
         # Keep only necessary columns
@@ -132,8 +136,10 @@ class BitGetClient:
         """Convert symbol format to BitGet format."""
         if "/" in symbol:
             base, quote = symbol.split("/")
-            return f"{base}{quote}"
-        return symbol
+            if quote.upper() != "USDT":
+                raise ValueError("Only USDT pairs are supported")
+            return base.upper()
+        return symbol.upper()
 
 # Configure page
 st.set_page_config(
@@ -163,20 +169,21 @@ st.markdown("""
 CONFIG = {
     'trading': {
         'timeframe': '1m',
-        'exchange': 'bitget',  # Changed to BitGet
+        'exchange': 'bitget',
+        'market_type': 'swap'  # For USDT-M perpetual futures
     },
     'visualization': {
-        'figure_size': (16, 8),  # Increased figure size for better visibility
-        'price_color': '#c0c0c0',  # Updated to silver color
-        'vwap_above_color': '#3399ff',  # Blue for VWAP when price is above
-        'vwap_below_color': '#ff4d4d',  # Red for VWAP when price is below
-        'vwma_color': '#90EE90',  # Light green for VWMA
+        'figure_size': (16, 8),
+        'price_color': '#c0c0c0',
+        'vwap_above_color': '#3399ff',
+        'vwap_below_color': '#ff4d4d',
+        'vwma_color': '#90EE90',
         'up_color': '#3399ff',
         'down_color': '#ff4d4d',
         'volume_colors': {
-            'high': '#3399ff',  # Match up_color for bullish volume
-            'medium': '#cccccc',  # Keep neutral color
-            'low': '#ff4d4d'  # Match down_color for bearish volume
+            'high': '#3399ff',
+            'medium': '#cccccc',
+            'low': '#ff4d4d'
         },
         'base_bubble_size': 35,
         'volume_bins': 50,
@@ -201,7 +208,7 @@ def initialize_exchange():
     ccxt_client = exchange_class({
         'enableRateLimit': True,
         'options': {
-            'defaultType': 'future',  # Use futures markets
+            'defaultType': CONFIG['trading']['market_type'],
             'fetchOHLCVWarning': False,
         }
     })
