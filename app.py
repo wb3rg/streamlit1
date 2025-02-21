@@ -112,24 +112,31 @@ def initialize_exchange():
             'recvWindow': 60000,
             'warnOnFetchOHLCVLimitArgument': False,
         },
-        # Add proxy configuration
+        # Add proxy configuration for bypassing regional restrictions
         'proxies': {
-            'http': 'http://proxy.freemyip.com:8080',  # This is a free proxy example
+            'http': 'http://proxy.freemyip.com:8080',
             'https': 'http://proxy.freemyip.com:8080'
+        },
+        # Add additional headers
+        'headers': {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
     })
     
-    # Set custom URLs for API endpoints
-    exchange.urls['api'] = {
-        'public': 'https://fapi.binance.com/fapi/v1',
-        'private': 'https://fapi.binance.com/fapi/v1',
-    }
+    # Load markets to ensure we have the latest trading pairs
+    exchange.load_markets()
     
     return exchange
 
 def fetch_market_data(exchange, symbol, lookback):
     """Fetch market data using CCXT."""
     try:
+        # Convert symbol to futures format if needed
+        if '/' in symbol:
+            base, quote = symbol.split('/')
+            if quote.upper() == 'USDT':
+                symbol = f"{base}/{quote}:USDT"  # Format for USD-M futures
+        
         current_time = pd.Timestamp.now(tz='UTC')
         start_time = int((current_time - pd.Timedelta(minutes=lookback+10)).timestamp() * 1000)
         
