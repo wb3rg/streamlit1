@@ -8,13 +8,9 @@ import numpy as np
 from datetime import datetime, timedelta
 from tseries_patterns import AmplitudeBasedLabeler
 import time
-import requests
 import math
 from typing import Dict, List, Optional, Tuple, Union
 import hmac
-import base64
-import hashlib
-import urllib.parse
 
 # Authentication
 def check_password():
@@ -45,102 +41,6 @@ def check_password():
         # Password correct
         return True
 
-class BitGetClient:
-    """BitGet REST API client with rate limiting and efficient data fetching."""
-    
-    def __init__(self):
-        self.base_url = "https://api.bitget.com"
-        self.session = requests.Session()
-        self.last_request_time = 0
-        self.min_request_interval = 0.05  # 50ms between requests
-        
-    def _wait_for_rate_limit(self):
-        """Implement simple rate limiting."""
-        current_time = time.time()
-        time_since_last = current_time - self.last_request_time
-        if time_since_last < self.min_request_interval:
-            time.sleep(self.min_request_interval - time_since_last)
-        self.last_request_time = time.time()
-    
-    def get_klines_data(self, symbol: str, interval: str = "1m", limit: int = 1000, start_time: Optional[int] = None) -> pd.DataFrame:
-        """
-        Fetch klines (OHLCV) data from BitGet with efficient pagination.
-        
-        Args:
-            symbol: Trading pair symbol (e.g., 'BTC/USDT')
-            interval: Time interval (1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d, 1w)
-            limit: Number of records to fetch
-            start_time: Start time in milliseconds
-        
-        Returns:
-            DataFrame with OHLCV data
-        """
-        # Convert symbol format
-        symbol = self._convert_symbol_format(symbol)
-        
-        # Convert interval to BitGet format
-        interval_map = {
-            "1m": "1",
-            "5m": "5",
-            "15m": "15",
-            "30m": "30",
-            "1h": "60",
-            "4h": "240",
-            "12h": "720",
-            "1d": "1440",
-            "1w": "10080"
-        }
-        bitget_interval = interval_map.get(interval, "1")
-        
-        endpoint = "/api/mix/v1/market/candles"
-        params = {
-            "symbol": symbol + "_UMCBL",  # Add UMCBL suffix for USDT-M contracts
-            "granularity": bitget_interval,
-            "limit": str(min(limit, 1000)),  # Convert to string as required by API
-            "productType": "UMCBL"  # Specify USDT-M perpetual
-        }
-        if start_time is not None:
-            params["startTime"] = str(start_time)  # Convert to string as required by API
-            
-        self._wait_for_rate_limit()
-        response = self.session.get(f"{self.base_url}{endpoint}", params=params)
-        
-        if response.status_code != 200:
-            raise Exception(f"Error fetching klines data: {response.text}")
-            
-        data = response.json()
-        
-        if not isinstance(data, list):
-            raise Exception(f"Unexpected response format: {data}")
-            
-        # Convert to DataFrame - BitGet returns data in reverse chronological order
-        df = pd.DataFrame(data, columns=[
-            "time", "open", "high", "low", "close", "volume", "quote_volume"
-        ])
-        
-        # Convert types and set index
-        df["time"] = pd.to_datetime(df["time"].astype(float), unit="ms")
-        for col in ["open", "high", "low", "close", "volume"]:
-            df[col] = df[col].astype(float)
-        
-        # Sort chronologically and set index
-        df = df.sort_values("time")
-        df.set_index("time", inplace=True)
-        
-        # Keep only necessary columns
-        df = df[["open", "high", "low", "close", "volume"]]
-        
-        return df
-    
-    def _convert_symbol_format(self, symbol: str) -> str:
-        """Convert symbol format to BitGet format."""
-        if "/" in symbol:
-            base, quote = symbol.split("/")
-            if quote.upper() != "USDT":
-                raise ValueError("Only USDT pairs are supported")
-            return base.upper()
-        return symbol.upper()
-
 # Configure page
 st.set_page_config(
     page_title="Quantavius Dashboard",
@@ -169,8 +69,8 @@ st.markdown("""
 CONFIG = {
     'trading': {
         'timeframe': '1m',
-        'exchange': 'bitget',
-        'market_type': 'swap'  # For USDT-M perpetual futures
+        'exchange': 'kucoin',  # Using KuCoin as it works well in Canada
+        'market_type': 'swap'  # For perpetual futures
     },
     'visualization': {
         'figure_size': (16, 8),
@@ -202,72 +102,37 @@ CONFIG = {
 
 def initialize_exchange():
     """Initialize the cryptocurrency exchange connection."""
-    # Initialize both BitGet client and CCXT (for orderbook)
-    bitget_client = BitGetClient()
     exchange_class = getattr(ccxt, CONFIG['trading']['exchange'])
-    ccxt_client = exchange_class({
+    exchange = exchange_class({
         'enableRateLimit': True,
         'options': {
             'defaultType': CONFIG['trading']['market_type'],
             'fetchOHLCVWarning': False,
         }
     })
-    return bitget_client, ccxt_client
+    return exchange
 
-def fetch_market_data(clients, symbol, lookback):
-    """Fetch market data from BitGet's REST API with proper pagination."""
+def fetch_market_data(exchange, symbol, lookback):
+    """Fetch market data using CCXT."""
     try:
-        bitget_client, _ = clients
         current_time = pd.Timestamp.now(tz='UTC')
-        
-        # Calculate the start time in milliseconds
         start_time = int((current_time - pd.Timedelta(minutes=lookback+10)).timestamp() * 1000)
         
-        # Initialize an empty list to store all dataframes
-        all_data = []
-        remaining_bars = lookback + 10  # Add buffer
-        current_start = start_time
+        # Fetch OHLCV data
+        ohlcv = exchange.fetch_ohlcv(
+            symbol=symbol,
+            timeframe=CONFIG['trading']['timeframe'],
+            since=start_time,
+            limit=lookback + 10  # Add buffer
+        )
         
-        # Fetch data with retry mechanism and proper pagination
-        max_retries = 3
-        retry_delay = 2  # seconds
-        
-        while remaining_bars > 0:
-            for attempt in range(max_retries):
-                try:
-                    # Calculate how many bars to fetch in this iteration (max 1000)
-                    batch_size = min(1000, remaining_bars)
-                    
-                    # Fetch batch of data
-                    df = bitget_client.get_klines_data(
-                        symbol=symbol,
-                        interval="1m",
-                        limit=batch_size,
-                        start_time=current_start
-                    )
-                    
-                    if df.empty:
-                        raise Exception("Empty OHLCV data received")
-                    
-                    all_data.append(df)
-                    
-                    # Update remaining bars and start time for next batch
-                    remaining_bars -= len(df)
-                    if remaining_bars > 0:
-                        current_start = int(df.index[-1].timestamp() * 1000) + 60000  # Add 1 minute in milliseconds
-                    
-                    break  # Success, exit retry loop
-                    
-                except Exception as e:
-                    if attempt == max_retries - 1:  # Last attempt
-                        raise Exception(f"Failed to fetch data after {max_retries} attempts: {str(e)}")
-                    time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
-        
-        # Combine all data
-        if not all_data:
-            raise Exception("No data was fetched")
+        if not ohlcv:
+            raise Exception("No data received from exchange")
             
-        df = pd.concat(all_data)
+        # Convert to DataFrame
+        df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
+        df['time'] = pd.to_datetime(df['time'], unit='ms')
+        df.set_index('time', inplace=True)
         
         # Convert timezone and sort
         df.index = df.index.tz_localize('UTC').tz_convert('America/Toronto')
@@ -282,15 +147,14 @@ def fetch_market_data(clients, symbol, lookback):
         return df
         
     except Exception as e:
-        print(f"Error in fetch_market_data: {str(e)}")
-        raise e
+        raise Exception(f"Failed to fetch data: {str(e)}")
 
 def calculate_vwma(df, period):
     """Calculate Volume Weighted Moving Average"""
     df['vwma'] = (df['close'] * df['volume']).rolling(window=period).sum() / df['volume'].rolling(window=period).sum()
     return df
 
-def calculate_metrics(df, ccxt_client, symbol, orderbook_depth):
+def calculate_metrics(df, exchange, symbol, orderbook_depth):
     """Calculate various market metrics including VWAP and order book imbalance."""
     try:
         # Calculate VWAP - reset at the start of each session
@@ -302,7 +166,7 @@ def calculate_metrics(df, ccxt_client, symbol, orderbook_depth):
         df = calculate_vwma(df, CONFIG['analysis']['vwma_period'])
         
         # Calculate order book metrics using CCXT
-        order_book = ccxt_client.fetch_order_book(symbol, orderbook_depth)
+        order_book = exchange.fetch_order_book(symbol, orderbook_depth)
         bids_volume = sum(bid[1] for bid in order_book['bids'][:orderbook_depth])
         asks_volume = sum(ask[1] for ask in order_book['asks'][:orderbook_depth])
         
@@ -569,8 +433,8 @@ def main():
             
             with placeholder.container():
                 with st.spinner("Fetching data..."):
-                    clients = initialize_exchange()
-                    df = fetch_market_data(clients, symbol, lookback_value)
+                    exchange = initialize_exchange()
+                    df = fetch_market_data(exchange, symbol, lookback_value)
                     
                     # If we're in a new minute or this is the first run
                     if last_minute is None or current_minute > last_minute:
@@ -578,7 +442,7 @@ def main():
                         CONFIG['analysis']['amplitude_threshold'] = amplitude_threshold
                         CONFIG['analysis']['inactive_period'] = inactive_period
                         
-                        df = calculate_metrics(df, clients[1], symbol, orderbook_depth)
+                        df = calculate_metrics(df, exchange, symbol, orderbook_depth)
                         last_minute = current_minute
                     
                     # Create matplotlib figure with increased size
