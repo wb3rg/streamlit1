@@ -69,8 +69,8 @@ st.markdown("""
 CONFIG = {
     'trading': {
         'timeframe': '1m',
-        'exchange': 'kucoin',  # Using KuCoin as it works well in Canada
-        'market_type': 'swap'  # For perpetual futures
+        'exchange': 'binance',  # Using Binance spot market
+        'market_type': 'spot'   # Using spot market for better accessibility
     },
     'visualization': {
         'figure_size': (16, 8),
@@ -108,6 +108,8 @@ def initialize_exchange():
         'options': {
             'defaultType': CONFIG['trading']['market_type'],
             'fetchOHLCVWarning': False,
+            'adjustForTimeDifference': True,
+            'recvWindow': 60000
         }
     })
     return exchange
@@ -385,7 +387,7 @@ def main():
     # Sidebar controls
     with st.sidebar:
         st.subheader("Enter Ticker Symbol")
-        symbol = st.text_input("Symbol (USDT Perpetual)", value="BTC/USDT", key="symbol_input").strip()
+        symbol = st.text_input("Symbol (USDT Pair)", value="BTC/USDT", key="symbol_input").strip()
         
         st.subheader("Select Lookback Period")
         lookback_options = {
@@ -411,11 +413,11 @@ def main():
                                   value=10, 
                                   key="inactive_slider")
         
-        # Add note about perpetual futures
+        # Add note about market type
         st.markdown("""
         ---
-        **Note:** This dashboard uses Binance USDT-M Perpetual Futures markets.
-        All pairs must be USDT-margined perpetual contracts.
+        **Note:** This dashboard uses Binance Spot Market.
+        All pairs must be USDT pairs (e.g., BTC/USDT, ETH/USDT).
         """)
         
         # Remove manual refresh interval control since we're using fixed 30-second updates
