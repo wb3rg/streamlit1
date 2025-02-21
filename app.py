@@ -45,14 +45,14 @@ def check_password():
         # Password correct
         return True
 
-class BinanceClient:
-    """Binance Futures REST API client with rate limiting and efficient data fetching."""
+class BitGetClient:
+    """BitGet REST API client with rate limiting and efficient data fetching."""
     
     def __init__(self):
-        self.base_url = "https://fapi.binance.com"  # Changed to futures API endpoint
+        self.base_url = "https://api.bitget.com"
         self.session = requests.Session()
         self.last_request_time = 0
-        self.min_request_interval = 0.05  # 50ms between requests (Binance has higher rate limits)
+        self.min_request_interval = 0.05  # 50ms between requests
         
     def _wait_for_rate_limit(self):
         """Implement simple rate limiting."""
@@ -64,25 +64,39 @@ class BinanceClient:
     
     def get_klines_data(self, symbol: str, interval: str = "1m", limit: int = 1000, start_time: Optional[int] = None) -> pd.DataFrame:
         """
-        Fetch klines (OHLCV) data from Binance Futures with efficient pagination.
+        Fetch klines (OHLCV) data from BitGet with efficient pagination.
         
         Args:
             symbol: Trading pair symbol (e.g., 'BTCUSDT')
-            interval: Time interval (1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1M)
-            limit: Number of records to fetch (max 1500 for futures)
+            interval: Time interval (1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d, 1w)
+            limit: Number of records to fetch
             start_time: Start time in milliseconds
         
         Returns:
             DataFrame with OHLCV data
         """
-        # Convert symbol format and add perpetual suffix if needed
+        # Convert symbol format
         symbol = self._convert_symbol_format(symbol)
         
-        endpoint = "/fapi/v1/klines"  # Changed to futures klines endpoint
+        # Convert interval to BitGet format
+        interval_map = {
+            "1m": "1min",
+            "5m": "5min",
+            "15m": "15min",
+            "30m": "30min",
+            "1h": "1h",
+            "4h": "4h",
+            "12h": "12h",
+            "1d": "1d",
+            "1w": "1w"
+        }
+        bitget_interval = interval_map.get(interval, "1min")
+        
+        endpoint = "/api/v2/spot/market/candles"
         params = {
             "symbol": symbol,
-            "interval": interval,
-            "limit": min(limit, 1500)  # Futures API allows up to 1500 candles
+            "interval": bitget_interval,
+            "limit": min(limit, 1000)  # BitGet max limit
         }
         if start_time is not None:
             params["startTime"] = start_time
@@ -95,11 +109,12 @@ class BinanceClient:
             
         data = response.json()
         
+        if "data" not in data:
+            raise Exception(f"Unexpected response format: {data}")
+            
         # Convert to DataFrame
-        df = pd.DataFrame(data, columns=[
-            "time", "open", "high", "low", "close", "volume",
-            "close_time", "quote_volume", "trades", "taker_buy_volume",
-            "taker_buy_quote_volume", "ignore"
+        df = pd.DataFrame(data["data"], columns=[
+            "time", "open", "high", "low", "close", "volume", "quote_volume"
         ])
         
         # Convert types and set index
@@ -114,14 +129,10 @@ class BinanceClient:
         return df
     
     def _convert_symbol_format(self, symbol: str) -> str:
-        """Convert symbol format to Binance Futures format."""
+        """Convert symbol format to BitGet format."""
         if "/" in symbol:
             base, quote = symbol.split("/")
-            # For futures, we only need to handle USDT pairs
-            if quote == "USDT":
-                return f"{base}{quote}"
-            else:
-                raise ValueError(f"Unsupported quote currency for futures: {quote}. Use USDT pairs.")
+            return f"{base}{quote}"
         return symbol
 
 # Configure page
@@ -152,7 +163,7 @@ st.markdown("""
 CONFIG = {
     'trading': {
         'timeframe': '1m',
-        'exchange': 'binanceusdm',  # Changed to Binance USD-M futures
+        'exchange': 'bitget',  # Changed to BitGet
     },
     'visualization': {
         'figure_size': (16, 8),  # Increased figure size for better visibility
@@ -184,8 +195,8 @@ CONFIG = {
 
 def initialize_exchange():
     """Initialize the cryptocurrency exchange connection."""
-    # Initialize both Binance Futures client and CCXT (for orderbook)
-    binance_client = BinanceClient()
+    # Initialize both BitGet client and CCXT (for orderbook)
+    bitget_client = BitGetClient()
     exchange_class = getattr(ccxt, CONFIG['trading']['exchange'])
     ccxt_client = exchange_class({
         'enableRateLimit': True,
@@ -194,12 +205,12 @@ def initialize_exchange():
             'fetchOHLCVWarning': False,
         }
     })
-    return binance_client, ccxt_client
+    return bitget_client, ccxt_client
 
 def fetch_market_data(clients, symbol, lookback):
-    """Fetch market data from Binance's REST API with proper pagination."""
+    """Fetch market data from BitGet's REST API with proper pagination."""
     try:
-        binance_client, _ = clients
+        bitget_client, _ = clients
         current_time = pd.Timestamp.now(tz='UTC')
         
         # Calculate the start time in milliseconds
@@ -221,7 +232,7 @@ def fetch_market_data(clients, symbol, lookback):
                     batch_size = min(1000, remaining_bars)
                     
                     # Fetch batch of data
-                    df = binance_client.get_klines_data(
+                    df = bitget_client.get_klines_data(
                         symbol=symbol,
                         interval="1m",
                         limit=batch_size,

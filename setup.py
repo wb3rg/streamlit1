@@ -34,15 +34,18 @@ def requirements(filename):
 modules = cythonize(find_cython_files(), language='c++')
 
 setup(
-    name='tseries_patterns',
-    version='0.1',
+    name="tseries_patterns",
+    version="0.1.0",
     packages=find_packages(),
     url='https://github.com/tr8dr/tseries-patterns',
     license='MIT License',
     author='Jonathan Shore',
     author_email='jonathan.shore@gmail.com',
     description='Momentum / Trend labeling for financial timeseries',
-    install_requires=requirements(filename="requirements.txt"),
+    install_requires=[
+        "numpy>=1.17.2",
+        "pandas>=0.25.1",
+    ],
     download_url = 'https://github.com/tr8dr/tseries-patterns/archive/V0_1.tar.gz',
     include_package_data=True,
     classifiers=[
@@ -61,7 +64,7 @@ setup(
     keywords=', '.join([
         "trend detection", "financial trends", "quant", "stocks", "trading", 
     ]),
-    python_requires='>=3',
+    python_requires=">=3.7",
     project_urls={
         'Bug Reports': 'https://github.com/tr8dr/tseries-patterns/issues',
         'Source': 'https://github.com/tr8dr/tseries-patterns',
