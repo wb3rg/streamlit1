@@ -16,6 +16,35 @@ import base64
 import hashlib
 import urllib.parse
 
+# Authentication
+def check_password():
+    """Returns `True` if the user had the correct password."""
+
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if hmac.compare_digest(st.session_state["password"], st.secrets["password"]):
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store the password
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        # First run, show input for password
+        st.text_input(
+            "Password", type="password", on_change=password_entered, key="password"
+        )
+        return False
+    elif not st.session_state["password_correct"]:
+        # Password incorrect, show input + error
+        st.text_input(
+            "Password", type="password", on_change=password_entered, key="password"
+        )
+        st.error("😕 Password incorrect")
+        return False
+    else:
+        # Password correct
+        return True
+
 class BinanceClient:
     """Binance Futures REST API client with rate limiting and efficient data fetching."""
     
@@ -586,4 +615,5 @@ def main():
         st.error(f"Error: {str(e)}")
 
 if __name__ == "__main__":
-    main() 
+    if check_password():
+        main() 

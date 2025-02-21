@@ -9,4 +9,10 @@ enableCORS = false
 enableXsrfProtection = true
 
 [browser]
-gatherUsageStats = false 
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+[server.headless]
+headless = true 
