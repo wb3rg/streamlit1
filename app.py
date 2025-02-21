@@ -69,8 +69,8 @@ st.markdown("""
 CONFIG = {
     'trading': {
         'timeframe': '1m',
-        'exchange': 'binance',  # Using Binance spot market
-        'market_type': 'spot'   # Using spot market for better accessibility
+        'exchange': 'binanceusdm',  # Using Binance USD-M Futures
+        'market_type': 'future'     # Using futures market
     },
     'visualization': {
         'figure_size': (16, 8),
@@ -109,9 +109,22 @@ def initialize_exchange():
             'defaultType': CONFIG['trading']['market_type'],
             'fetchOHLCVWarning': False,
             'adjustForTimeDifference': True,
-            'recvWindow': 60000
+            'recvWindow': 60000,
+            'warnOnFetchOHLCVLimitArgument': False,
+        },
+        # Add proxy configuration
+        'proxies': {
+            'http': 'http://proxy.freemyip.com:8080',  # This is a free proxy example
+            'https': 'http://proxy.freemyip.com:8080'
         }
     })
+    
+    # Set custom URLs for API endpoints
+    exchange.urls['api'] = {
+        'public': 'https://fapi.binance.com/fapi/v1',
+        'private': 'https://fapi.binance.com/fapi/v1',
+    }
+    
     return exchange
 
 def fetch_market_data(exchange, symbol, lookback):
@@ -387,7 +400,7 @@ def main():
     # Sidebar controls
     with st.sidebar:
         st.subheader("Enter Ticker Symbol")
-        symbol = st.text_input("Symbol (USDT Pair)", value="BTC/USDT", key="symbol_input").strip()
+        symbol = st.text_input("Symbol (USDT Perpetual)", value="BTC/USDT", key="symbol_input").strip()
         
         st.subheader("Select Lookback Period")
         lookback_options = {
@@ -416,11 +429,11 @@ def main():
         # Add note about market type
         st.markdown("""
         ---
-        **Note:** This dashboard uses Binance Spot Market.
-        All pairs must be USDT pairs (e.g., BTC/USDT, ETH/USDT).
+        **Note:** This dashboard uses Binance USD-M Perpetual Futures.
+        All pairs must be USDT-margined perpetual contracts (e.g., BTC/USDT, ETH/USDT).
         """)
         
-        # Remove manual refresh interval control since we're using fixed 30-second updates
+        # Update frequency note
         st.subheader("Update Frequency")
         st.text("Data updates every 30 seconds")
 
